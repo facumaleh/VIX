@@ -1,211 +1,151 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
 import yfinance as yf
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy.stats import norm
-from sklearn.linear_model import LinearRegression
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
-# Constantes
-PERIODS_EWMA = [7, 21, 90]
-COLORS = ['orange', 'green', 'red', 'purple', 'brown']
+import numpy as np
+from datetime import datetime, timedelta
 
 # Configuración de la página
-st.set_page_config(page_title="Análisis de Acciones y VIX", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="Análisis de Acciones y VIX",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Título y descripción
 st.title("📈 Análisis de Acciones y VIX")
 st.markdown("""
-Esta aplicación permite analizar los retornos de acciones seleccionadas y su relación con el índice VIX.
-Puedes elegir múltiples acciones y ajustar el período de análisis.
+Esta aplicación te permite analizar los retornos de acciones seleccionadas y su relación con el índice VIX.
+Puedes elegir múltiples acciones, ajustar el período de análisis y visualizar gráficos interactivos.
 """)
 
 # Sidebar para la selección de acciones y período
-st.sidebar.header("Configuración")
-tickers = st.sidebar.multiselect(
-    "Selecciona las acciones:",
-    options=["SPY", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA"],
-    default=["SPY"]
-)
-period = st.sidebar.selectbox(
-    "Selecciona el período:",
-    options=["1y", "3y", "5y", "10y", "max"],
-    index=2
-)
-
-# Botón para ejecutar el análisis
-if st.sidebar.button("Ejecutar Análisis"):
-    if not tickers:
-        st.error("Por favor, selecciona al menos una acción.")
+with st.sidebar:
+    st.header("Configuración")
+    
+    # Selección de acciones
+    tickers = st.multiselect(
+        "Selecciona las acciones:",
+        options=["SPY", "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA"],
+        default=["SPY"]
+    )
+    
+    # Selección del período
+    period = st.selectbox(
+        "Selecciona el período:",
+        options=["1 mes", "3 meses", "6 meses", "1 año", "2 años", "5 años", "10 años"],
+        index=3
+    )
+    
+    # Botón para ejecutar el análisis
+    if st.button("Ejecutar Análisis", type="primary"):
+        st.session_state.run_analysis = True
     else:
-        st.success(f"Analizando {', '.join(tickers)} para el período {period}...")
+        st.session_state.run_analysis = False
 
-        # Descargar datos
+# Función para descargar datos
+@st.cache_data
+def load_data(ticker, period):
+    """Descarga datos históricos de un ticker."""
+    try:
+        data = yf.download(ticker, period=period)
+        return data
+    except Exception as e:
+        st.error(f"Error al descargar datos para {ticker}: {e}")
+        return None
+
+# Función para calcular retornos
+def calculate_returns(data):
+    """Calcula los retornos diarios y acumulados."""
+    data['Retorno diario'] = (data['Close'] - data['Open']) / data['Open']
+    data['Retorno acumulado'] = (1 + data['Retorno diario']).cumprod() - 1
+    return data
+
+# Función para graficar retornos
+def plot_returns(data, ticker):
+    """Grafica los retornos diarios y acumulados."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6))
+    
+    # Retornos diarios
+    ax1.plot(data.index, data['Retorno diario'], marker='o', color='dodgerblue', label='Retorno diario', linestyle='-', linewidth=1)
+    ax1.set_title(f'Retornos Diarios ({ticker})', fontsize=16, fontweight='bold')
+    ax1.set_xlabel('Fecha', fontsize=14)
+    ax1.set_ylabel('Retorno', fontsize=14)
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    ax1.legend(fontsize=12)
+    
+    # Retornos acumulados
+    ax2.plot(data.index, data['Retorno acumulado'], marker='o', color='green', label='Retorno acumulado', linestyle='-', linewidth=1)
+    ax2.set_title(f'Retornos Acumulados ({ticker})', fontsize=16, fontweight='bold')
+    ax2.set_xlabel('Fecha', fontsize=14)
+    ax2.set_ylabel('Retorno Acumulado', fontsize=14)
+    ax2.grid(True, linestyle='--', alpha=0.7)
+    ax2.legend(fontsize=12)
+    
+    st.pyplot(fig)
+
+# Función para graficar precios de cierre
+def plot_close_prices(data, ticker):
+    """Grafica los precios de cierre."""
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(data['Close'], label='Precio de cierre', color='purple', linewidth=2)
+    ax.set_title(f'Precio de cierre de {ticker}', fontsize=16, fontweight='bold')
+    ax.set_xlabel('Fecha', fontsize=14)
+    ax.set_ylabel('Precio de cierre', fontsize=14)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend(fontsize=12)
+    st.pyplot(fig)
+
+# Función principal para ejecutar el análisis
+def run_analysis():
+    if not tickers:
+        st.warning("Por favor, selecciona al menos una acción.")
+        return
+    
+    # Convertir el período seleccionado a un formato compatible con yfinance
+    period_mapping = {
+        "1 mes": "1mo",
+        "3 meses": "3mo",
+        "6 meses": "6mo",
+        "1 año": "1y",
+        "2 años": "2y",
+        "5 años": "5y",
+        "10 años": "10y"
+    }
+    period_yfinance = period_mapping[period]
+    
+    # Mostrar un spinner mientras se cargan los datos
+    with st.spinner("Cargando datos..."):
         data_dict = {}
         for ticker in tickers:
-            data = yf.download(ticker, period=period)
-            if data.empty:
-                st.error(f"No se pudieron descargar datos para {ticker}.")
-            else:
+            data = load_data(ticker, period_yfinance)
+            if data is not None:
                 data_dict[ticker] = data
-
+        
         if not data_dict:
             st.error("No se pudieron descargar datos para ninguna acción seleccionada.")
-        else:
-            # Calcular retornos y graficar
-            for ticker, data in data_dict.items():
-                st.subheader(f"Análisis de {ticker}")
+            return
+    
+    # Mostrar los datos y gráficos para cada acción
+    for ticker, data in data_dict.items():
+        st.subheader(f"Análisis de {ticker}")
+        
+        # Calcular retornos
+        data = calculate_returns(data)
+        
+        # Mostrar precios de cierre
+        st.write(f"Precios de cierre de {ticker}:")
+        st.line_chart(data['Close'])
+        
+        # Mostrar gráficos de retornos
+        plot_returns(data, ticker)
+        
+        # Mostrar estadísticas básicas
+        st.write("Estadísticas básicas:")
+        st.dataframe(data[['Open', 'Close', 'Retorno diario', 'Retorno acumulado']].describe())
 
-                # Calcular retornos
-                data['Retorno total'] = (data['Close'] - data['Open']) / data['Open']
-                data['rt logaritmico'] = np.log(data['Close'] / data['Open'])
-                data['Retorno acumulado'] = (1 + data['Retorno total']).cumprod() - 1
-
-                # Gráficos de retornos
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Retornos Diarios**")
-                    fig, ax = plt.subplots(figsize=(10, 5))
-                    ax.plot(data.index, data['Retorno total'], marker='o', color='dodgerblue', label='Retorno diario', linestyle='-', linewidth=1)
-                    ax.set_xlabel('Fecha')
-                    ax.set_ylabel('Retorno')
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    ax.legend()
-                    st.pyplot(fig)
-
-                with col2:
-                    st.markdown("**Retornos Acumulados**")
-                    fig, ax = plt.subplots(figsize=(10, 5))
-                    ax.plot(data.index, data['Retorno acumulado'], marker='o', color='green', label='Retorno acumulado', linestyle='-', linewidth=1)
-                    ax.set_xlabel('Fecha')
-                    ax.set_ylabel('Retorno Acumulado')
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    ax.legend()
-                    st.pyplot(fig)
-
-                # Gráfico de dispersión
-                st.markdown("**Retorno Logarítmico vs Retorno Total**")
-                fig, ax = plt.subplots(figsize=(12, 6))
-                ax.scatter(data['Retorno total'], data['rt logaritmico'], color='r', label='Retorno logarítmico vs Retorno total')
-                ax.set_xlabel('Retorno Total')
-                ax.set_ylabel('Retorno Logarítmico')
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.legend()
-                st.pyplot(fig)
-
-                # EWMA
-                st.markdown("**Retorno Total y EWMA**")
-                data = calculate_ewma(data, PERIODS_EWMA)
-                fig, ax = plt.subplots(figsize=(12, 6))
-                ax.plot(data.index, data['Retorno total'], marker='.', color='blue', label='Retorno total', alpha=0.7, markersize=5)
-
-                for period_ewma, color in zip(PERIODS_EWMA, COLORS):
-                    ax.plot(data.index, data[f'EWMA {period_ewma} días'], label=f'EWMA {period_ewma} días', linewidth=2, color=color)
-
-                high_volatility_period = data[data['Retorno total'].abs() > 0.02]
-                ax.scatter(high_volatility_period.index, high_volatility_period['Retorno total'], color='red', label='Alta volatilidad', zorder=10)
-
-                ax.set_xlabel('Fecha')
-                ax.set_ylabel('Retorno')
-                ax.legend(fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left')
-                ax.grid(True, linestyle='--', alpha=0.7)
-                st.pyplot(fig)
-
-            # Descargar datos del VIX
-            data_vix = yf.download("^VIX", period=period)
-            if data_vix.empty:
-                st.error("No se pudieron descargar datos del VIX.")
-            else:
-                # Combinar datos de SPY y VIX
-                data_spy = data_dict.get("SPY")
-                if data_spy is not None:
-                    data = data_spy[['Close']].copy()
-                    data.rename(columns={'Close': 'SPY_Close'}, inplace=True)
-                    data['VIX_Close'] = data_vix['Close']
-                    data['SPY_Returns'] = (data['SPY_Close'] - data['SPY_Close'].shift(1)) / data['SPY_Close'].shift(1)
-                    data.dropna(inplace=True)
-
-                    # Ajustar distribución normal
-                    st.subheader("Distribución de Retornos del SPY")
-                    mu, sigma = norm.fit(data['SPY_Returns'])
-                    st.write(f"Media de los retornos del SPY: {mu:.4f}")
-                    st.write(f"Desviación estándar de los retornos del SPY: {sigma:.4f}")
-
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    ax.hist(data['SPY_Returns'], bins=50, density=True, alpha=0.75, color='blue', label='Retornos del SPY')
-                    x = np.linspace(min(data['SPY_Returns']), max(data['SPY_Returns']), 100)
-                    ax.plot(x, norm.pdf(x, mu, sigma), color='red', linewidth=2, label='Distribución Normal Ajustada')
-                    ax.set_xlabel('Retornos')
-                    ax.set_ylabel('Densidad')
-                    ax.legend()
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    st.pyplot(fig)
-
-                    # Eventos extremos
-                    st.subheader("Relación entre SPY y VIX en Eventos Extremos")
-                    eventos_extremos = data[np.abs(data['SPY_Returns']) > 0.2]
-
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    ax.scatter(data['SPY_Returns'], data['VIX_Close'], alpha=0.5, label='Datos Normales')
-                    ax.scatter(eventos_extremos['SPY_Returns'], eventos_extremos['VIX_Close'], color='red', label='Eventos Extremos')
-                    ax.set_xlabel('Retornos del SPY')
-                    ax.set_ylabel('VIX')
-                    ax.legend()
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    st.pyplot(fig)
-
-                    # Regresión lineal
-                    st.subheader("Regresión Lineal entre Retornos del SPY y el VIX")
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    sns.regplot(x=data['SPY_Returns'], y=data['VIX_Close'], ci=95, scatter_kws={'alpha': 0.5}, line_kws={'color': 'red'}, ax=ax)
-                    ax.set_xlabel('Retornos del SPY')
-                    ax.set_ylabel('VIX')
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    st.pyplot(fig)
-
-                    # Clustering con K-Means
-                    st.subheader("Clustering con K-Means")
-                    X = data[['SPY_Returns', 'VIX_Close']].values
-                    scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-
-                    kmeans = KMeans(n_clusters=3, random_state=42)
-                    kmeans.fit(X_scaled)
-
-                    labels = kmeans.labels_
-                    data['Cluster'] = labels
-
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-
-                    for cluster in np.unique(labels):
-                        ax.scatter(
-                            X_scaled[labels == cluster, 0],
-                            X_scaled[labels == cluster, 1],
-                            color=colors[cluster],
-                            label=f'Cluster {cluster}',
-                            alpha=0.7,
-                            edgecolor='black',
-                            s=100
-                        )
-
-                    ax.scatter(
-                        kmeans.cluster_centers_[:, 0],
-                        kmeans.cluster_centers_[:, 1],
-                        s=300,
-                        c='black',
-                        marker='X',
-                        label='Centroides',
-                        edgecolor='white',
-                        linewidth=2
-                    )
-
-                    ax.set_xlabel('SPY_Returns (escalado)')
-                    ax.set_ylabel('VIX_Close (escalado)')
-                    ax.legend(fontsize=10, loc='upper right')
-                    ax.grid(True, linestyle='--', alpha=0.7)
-                    st.pyplot(fig)
+# Ejecutar el análisis si el usuario hizo clic en el botón
+if st.session_state.get("run_analysis", False):
+    run_analysis()
